@@ -14,36 +14,21 @@ cl_context context = NULL;
 scoped_array<cl_command_queue> queue; // num_devices elements
 cl_program program = NULL;
 scoped_array<cl_kernel> kernel; // num_devices elements
-#if USE_SVM_API == 0
-scoped_array<cl_mem> input_a_buf; // num_devices elements
-scoped_array<cl_mem> input_b_buf; // num_devices elements
-scoped_array<cl_mem> output_buf; // num_devices elements
-#endif /* USE_SVM_API == 0 */
 
-// Problem data.
-unsigned A_height = 32 * BLOCK_SIZE;
-unsigned A_width  = 16 * BLOCK_SIZE;
-const unsigned &B_height = A_width;
-unsigned B_width  = 16 * BLOCK_SIZE;
-const unsigned &C_height = A_height;
-const unsigned &C_width  = B_width;
+cl_mem input_json_buf;
+cl_mem output_unsaferow_buf;
 
-#if USE_SVM_API == 0
-scoped_array<scoped_aligned_ptr<float> > input_a; // num_devices elements
-scoped_aligned_ptr<float> input_b;
-scoped_array<scoped_aligned_ptr<float> > output; // num_devices elements
-#else
-scoped_array<scoped_SVM_aligned_ptr<float> > input_a; // num_devices elements
-scoped_SVM_aligned_ptr<float> input_b;
-scoped_array<scoped_SVM_aligned_ptr<float> > output; // num_devices elements
-#endif /* USE_SVM_API == 0 */
-scoped_array<float> ref_output;
-scoped_array<unsigned> rows_per_device; // num_devices elements
-
+unsigned json_lines_count = 10;
+// {"a":"a","b":"b"}, maximum value size to 8 bytes
+unsigned json_line_column_count = 2;
+unsigned unsafe_row_size = 8 + (8 + 8) * json_line_column_count;
+unsigned json_file_size = 0;
+unsigned json_line_size = 0;
+scoped_aligned_ptr<char> input_json_str;
+scoped_aligned_ptr<char> output_unsafe_row_binary;
 // Function prototypes
 float rand_float();
 bool init_opencl();
-void init_problem();
 void run();
 void compute_reference();
 void verify();
@@ -51,38 +36,39 @@ void cleanup();
 
 // Entry point.
 int main(int argc, char **argv) {
+  char* jsonFilePath = NULL;
   Options options(argc, argv);
-  if(options.has("ah")) {
-    A_height = options.get<unsigned>("ah");
+  if(options.has("jsonline")) {
+    json_lines_count = options.get<unsigned>("jsonline");
   }
-  if(options.has("aw")) {
-    A_width = options.get<unsigned>("aw");
+  if(options.has("jsonfile")) {
+    jsonFilePath = options.get<char*>("jsonfile");
+    FILE *fp = fopen(jsonFilePath, "r");
+    if (!fp) {
+      fprintf(stderr, "Cannot open file %s, Exiting...\n", jsonFilePath);
+      exit(-1);
+    }
+    fseek(fp, 0L, SEEK_END);
+    json_file_size = ftell(fp);
+    rewind(fp);
+    input_json_str.reset(json_file_size);
+    unsigned read_size = fread(input_json_str.get(), sizeof(char), json_file_size, fp); 
+    input_json_str[read_size] = '\0';
+    if (json_file_size != read_size) {
+      // Something went wrong, throw away the memory and set
+      // the buffer to NULL
+      fprintf(stderr, "file size doesn't match read size %d vs %d, Exiting...\n", json_file_size, read_size);
+      exit(-2);
+    }
+    fclose(fp);
+    json_line_size = json_file_size/json_lines_count;
   }
-  if(options.has("bw")) {
-    B_width = options.get<unsigned>("bw");
-  }
-
-  printf("Matrix sizes:\n  A: %d x %d\n  B: %d x %d\n  C: %d x %d\n",
-      A_height, A_width, B_height, B_width, C_height, C_width);
-
-  // Spot check matrix sizes. They all must be a multiple of BLOCK_SIZE,
-  // although it is relatively straightforward to handle non-multiples
-  // by adding padding. For simplicity, this example does not pad.
-  if((A_height % BLOCK_SIZE) != 0 || (A_width % BLOCK_SIZE) != 0 ||
-     (B_height % BLOCK_SIZE) != 0 || (B_width % BLOCK_SIZE) != 0 ||
-     (C_height % BLOCK_SIZE) != 0 || (C_width % BLOCK_SIZE) != 0) {
-    printf("Matrix sizes must be a multiple of %d.\n", BLOCK_SIZE);
-    return -1;
-  }
+  printf("Json file path:\n  %s", jsonFilePath);
 
   // Initialize OpenCL.
   if(!init_opencl()) {
     return -1;
   }
-
-  // Initialize the problem data.
-  // Requires the number of devices to be known.
-  init_problem();
 
   // Run the kernel.
   run();
@@ -131,7 +117,7 @@ bool init_opencl() {
 
   // Create the program for all device. Use the first device as the
   // representative device (assuming all device are of the same type).
-  std::string binary_file = getBoardBinaryFile("matrix_mult", device[0]);
+  std::string binary_file = getBoardBinaryFile("json_parse", device[0]);
   printf("Using AOCX: %s\n", binary_file.c_str());
   program = createProgramFromBinary(context, binary_file.c_str(), device, num_devices);
 
@@ -142,173 +128,43 @@ bool init_opencl() {
   // Create per-device objects.
   queue.reset(num_devices);
   kernel.reset(num_devices);
-  rows_per_device.reset(num_devices);
-#if USE_SVM_API == 0
-  input_a_buf.reset(num_devices);
-  input_b_buf.reset(num_devices);
-  output_buf.reset(num_devices);
-#endif /* USE_SVM_API == 0 */
 
-  const unsigned num_block_rows = C_height / BLOCK_SIZE;
+  // Command queue.
+  queue[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+  checkError(status, "Failed to create command queue");
 
-  for(unsigned i = 0; i < num_devices; ++i) {
-    // Command queue.
-    queue[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
-    checkError(status, "Failed to create command queue");
+  // Kernel.
+  const char *kernel_name = "parseJson";
+  kernel[i] = clCreateKernel(program, kernel_name, &status);
+  checkError(status, "Failed to create kernel");
 
-    // Kernel.
-    const char *kernel_name = "matrixMult";
-    kernel[i] = clCreateKernel(program, kernel_name, &status);
-    checkError(status, "Failed to create kernel");
+  // Input buffers.
+  //We specifically assign this buffer to the first bank of global memory.
+  input_json_buf = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_CHANNEL_1_INTELFPGA,
+      json_file_size * sizeof(char), NULL, &status);
+  checkError(status, "Failed to create buffer for json string");
 
-    // Determine the number of rows processed by this device.
-    // First do this computation in block-rows.
-    rows_per_device[i] = num_block_rows / num_devices; // this is the number of block-rows
-
-    // Spread out the remainder of the block-rows over the first
-    // N % num_devices.
-    if(i < (num_block_rows % num_devices)) {
-      rows_per_device[i]++;
-    }
-
-    // Multiply by BLOCK_SIZE to get the actual number of rows.
-    rows_per_device[i] *= BLOCK_SIZE;
-
-#if USE_SVM_API == 0
-    // Input buffers.
-    // For matrix A, each device only needs the rows corresponding
-    // to the rows of the output matrix. We specifically
-    // assign this buffer to the first bank of global memory.
-    input_a_buf[i] = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_CHANNEL_1_INTELFPGA,
-        rows_per_device[i] * A_width * sizeof(float), NULL, &status);
-    checkError(status, "Failed to create buffer for input A");
-
-    // For matrix B, each device needs the whole matrix. We specifically
-    // assign this buffer to the second bank of global memory.
-    input_b_buf[i] = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_CHANNEL_2_INTELFPGA,
-        B_height * B_width * sizeof(float), NULL, &status);
-    checkError(status, "Failed to create buffer for input B");
-
-    // Output buffer. This is matrix C, for the rows that are computed by this
-    // device. We assign this buffer to the first bank of global memory,
-    // although it is not material to performance to do so because
-    // the reads from the input matrices are far more frequent than the
-    // write to the output matrix.
-    output_buf[i] = clCreateBuffer(context, CL_MEM_WRITE_ONLY | CL_CHANNEL_1_INTELFPGA,
-        rows_per_device[i] * C_width * sizeof(float), NULL, &status);
-    checkError(status, "Failed to create buffer for output");
-#else
-    cl_device_svm_capabilities caps = 0;
-
-    status = clGetDeviceInfo(
-      device[i],
-      CL_DEVICE_SVM_CAPABILITIES,
-      sizeof(cl_device_svm_capabilities),
-      &caps,
-      0
-    );
-    checkError(status, "Failed to get device info");
-
-    if (!(caps & CL_DEVICE_SVM_COARSE_GRAIN_BUFFER)) {
-      printf("The host was compiled with USE_SVM_API, however the device currently being targeted does not support SVM.\n");
-      // Free the resources allocated
-      cleanup();
-      return false;
-    }
-#endif /* USE_SVM_API == 0 */
-  }
+  // Output buffer. This is unsaferow buffer, We assign this buffer to the first bank of global memory,
+  output_unsaferow_buf = clCreateBuffer(context, CL_MEM_WRITE_ONLY | CL_CHANNEL_1_INTELFPGA,
+      json_lines_count*unsafe_row_size, NULL, &status);
+  checkError(status, "Failed to create buffer for unsaferow output");
 
   return true;
 }
 
-// Initialize the data for the problem. Requires num_devices to be known.
-void init_problem() {
-  if(num_devices == 0) {
-    checkError(-1, "No devices");
-  }
-
-  // Generate input matrices A and B. For matrix A, we divide up the host
-  // buffers so that the buffers are aligned for each device. The whole of
-  // matrix B is used by each device, so it does not need to be divided.
-  printf("Generating input matrices\n");
-  input_a.reset(num_devices);
-  output.reset(num_devices);
-#if USE_SVM_API == 0
-  for(unsigned i = 0; i < num_devices; ++i) {
-    input_a[i].reset(rows_per_device[i] * A_width);
-    output[i].reset(rows_per_device[i] * C_width);
-
-    for(unsigned j = 0; j < rows_per_device[i] * A_width; ++j) {
-      input_a[i][j] = rand_float();
-    }
-  }
-
-  input_b.reset(B_height * B_width);
-  for(unsigned i = 0; i < B_height * B_width; ++i) {
-    input_b[i] = rand_float();
-  }
-#else
-  for(unsigned i = 0; i < num_devices; ++i) {
-    input_a[i].reset(context, rows_per_device[i] * A_width);
-    output[i].reset(context, rows_per_device[i] * C_width);
-
-    cl_int status;
-
-    status = clEnqueueSVMMap(queue[i], CL_TRUE, CL_MAP_WRITE,
-        (void *)input_a[i], rows_per_device[i] * A_width * sizeof(float), 0, NULL, NULL);
-    checkError(status, "Failed to map input A");
-
-    for(unsigned j = 0; j < rows_per_device[i] * A_width; ++j) {
-      input_a[i][j] = rand_float();
-    }
-
-    status = clEnqueueSVMUnmap(queue[i], (void *)input_a[i], 0, NULL, NULL);
-    checkError(status, "Failed to unmap input A");
-  }
-
-  input_b.reset(context, B_height * B_width);
-
-  cl_int status;
-
-  for (unsigned i = 0; i < num_devices; ++i) {
-    status = clEnqueueSVMMap(queue[i], CL_TRUE, CL_MAP_WRITE,
-        (void *)input_b, B_height * B_width * sizeof(float), 0, NULL, NULL);
-    checkError(status, "Failed to map input B");
-  }
-
-  for(unsigned i = 0; i < B_height * B_width; ++i) {
-    input_b[i] = rand_float();
-  }
-
-  for (unsigned i = 0; i < num_devices; ++i) {
-    status = clEnqueueSVMUnmap(queue[i], (void *)input_b, 0, NULL, NULL);
-    checkError(status, "Failed to unmap input B");
-  }
-#endif /* USE_SVM_API == 0 */
-}
 
 void run() {
   cl_int status;
 
-#if USE_SVM_API == 0
   // Transfer inputs to each device. Each of the host buffers supplied to
   // clEnqueueWriteBuffer here is already aligned to ensure that DMA is used
   // for the host-to-device transfer.
-  for(unsigned i = 0; i < num_devices; ++i) {
-    status = clEnqueueWriteBuffer(queue[i], input_a_buf[i], CL_FALSE,
-        0, rows_per_device[i] * A_width * sizeof(float), input_a[i], 0, NULL, NULL);
-    checkError(status, "Failed to transfer input A");
-
-    status = clEnqueueWriteBuffer(queue[i], input_b_buf[i], CL_FALSE,
-        0, B_width * B_height * sizeof(float), input_b, 0, NULL, NULL);
-    checkError(status, "Failed to transfer input B");
-  }
+  status = clEnqueueWriteBuffer(queue[0], input_json_buf, CL_FALSE,
+      0, json_file_size, input_json_str, 0, NULL, NULL);
+  checkError(status, "Failed to transfer json_str to FPGA");
 
   // Wait for all queues to finish.
-  for(unsigned i = 0; i < num_devices; ++i) {
-    clFinish(queue[i]);
-  }
-#endif /* USE_SVM_API == 0 */
+  clFinish(queue[0]);
 
   // Launch kernels.
   // This is the portion of time that we'll be measuring for throughput
@@ -320,31 +176,14 @@ void run() {
     // Set kernel arguments.
     unsigned argi = 0;
 
-#if USE_SVM_API == 0
-    status = clSetKernelArg(kernel[i], argi++, sizeof(cl_mem), &output_buf[i]);
-    checkError(status, "Failed to set argument %d", argi - 1);
+    status = clSetKernelArg(kernel[i], argi++, sizeof(cl_mem), &input_json_buf);
+    checkError(status, "Failed to set argument(input json buffer) %d", argi - 1);
 
-    status = clSetKernelArg(kernel[i], argi++, sizeof(cl_mem), &input_a_buf[i]);
-    checkError(status, "Failed to set argument %d", argi - 1);
+    status = clSetKernelArg(kernel[i], argi++, sizeof(json_line_size), &json_line_size);
+    checkError(status, "Failed to set argument(json line size) %d", argi - 1);
 
-    status = clSetKernelArg(kernel[i], argi++, sizeof(cl_mem), &input_b_buf[i]);
-    checkError(status, "Failed to set argument %d", argi - 1);
-#else
-    status = clSetKernelArgSVMPointer(kernel[i], argi++, (void*)output[i]);
-    checkError(status, "Failed to set argument %d", argi - 1);
-
-    status = clSetKernelArgSVMPointer(kernel[i], argi++, (void*)input_a[i]);
-    checkError(status, "Failed to set argument %d", argi - 1);
-
-    status = clSetKernelArgSVMPointer(kernel[i], argi++, (void*)input_b);
-    checkError(status, "Failed to set argument %d", argi - 1);
-#endif /* USE_SVM_API == 0 */
-
-    status = clSetKernelArg(kernel[i], argi++, sizeof(A_width), &A_width);
-    checkError(status, "Failed to set argument %d", argi - 1);
-
-    status = clSetKernelArg(kernel[i], argi++, sizeof(B_width), &B_width);
-    checkError(status, "Failed to set argument %d", argi - 1);
+    status = clSetKernelArg(kernel[i], argi++, sizeof(cl_mem), &output_unsaferow_buf);
+    checkError(status, "Failed to set argument(output unsafe row buffer) %d", argi - 1);
 
     // Enqueue kernel.
     // Use a global work size corresponding to the size of the output matrix.
@@ -355,8 +194,8 @@ void run() {
     //
     // Events are used to ensure that the kernel is not launched until
     // the writes to the input buffers have completed.
-    const size_t global_work_size[2] = {C_width, rows_per_device[i]};
-    const size_t local_work_size[2]  = {BLOCK_SIZE, BLOCK_SIZE};
+    const size_t global_work_size[2] = {json_lines_count * unsafe_row_size, 1};
+    const size_t local_work_size[2]  = {unsafe_row_size, 1};
     printf("Launching for device %d (global size: %zd, %zd)\n", i, global_work_size[0], global_work_size[1]);
 
     status = clEnqueueNDRangeKernel(queue[i], kernel[i], 2, NULL,
@@ -379,12 +218,6 @@ void run() {
     printf("Kernel time (device %d): %0.3f ms\n", i, double(time_ns) * 1e-6);
   }
 
-  // Compute the throughput (GFLOPS).
-  // There are C_width * C_height output values, with each value
-  // computed using A_width multiplies and adds.
-  const float flops = (float)(2.0f * C_width * C_height * A_width / total_time);
-  printf("\nThroughput: %0.2f GFLOPS\n\n", flops * 1e-9);
-
   // Release kernel events.
   for(unsigned i = 0; i < num_devices; ++i) {
     clReleaseEvent(kernel_event[i]);
@@ -392,26 +225,14 @@ void run() {
 
   // Read the result.
   for(unsigned i = 0; i < num_devices; ++i) {
-#if USE_SVM_API == 0
-    status = clEnqueueReadBuffer(queue[i], output_buf[i], CL_TRUE,
-        0, rows_per_device[i] * C_width * sizeof(float), output[i], 0, NULL, NULL);
+    status = clEnqueueReadBuffer(queue[i], output_unsaferow_buf, CL_TRUE,
+        0, json_lines_count * unsafe_row_size, output_unsafe_row_binary, 0, NULL, NULL);
     checkError(status, "Failed to read output matrix");
-#else
-    status = clEnqueueSVMMap(queue[i], CL_TRUE, CL_MAP_READ,
-        (void *)output[i], rows_per_device[i] * C_width * sizeof(float), 0, NULL, NULL);
-    checkError(status, "Failed to map output");
-#endif /* USE_SVM_API == 0 */
   }
 
   // Verify results.
-  compute_reference();
-  verify();
-#if USE_SVM_API == 1
-  for (unsigned i = 0; i < num_devices; ++i) {
-    status = clEnqueueSVMUnmap(queue[i], (void *)output[i], 0, NULL, NULL);
-    checkError(status, "Failed to unmap output");
-  }
-#endif /* USE_SVM_API == 1 */
+  //compute_reference();
+  //verify();
 }
 
 void compute_reference() {
@@ -471,27 +292,13 @@ void cleanup() {
     if(queue && queue[i]) {
       clReleaseCommandQueue(queue[i]);
     }
-#if USE_SVM_API == 0
-    if(input_a_buf && input_a_buf[i]) {
-      clReleaseMemObject(input_a_buf[i]);
+    if (input_json_buf) {
+      clReleaseMemObject(input_json_buf);
     }
-    if(input_b_buf && input_b_buf[i]) {
-      clReleaseMemObject(input_b_buf[i]);
+    if (output_unsaferow_buf) {
+      clReleaseMemObject(output_unsaferow_buf);
     }
-    if(output_buf && output_buf[i]) {
-      clReleaseMemObject(output_buf[i]);
-    }
-#else
-    if(input_a[i].get())
-      input_a[i].reset();
-    if(output[i].get())
-      output[i].reset();
-#endif /* USE_SVM_API == 0 */
   }
-#if USE_SVM_API == 1
-  if(input_b.get())
-    input_b.reset();
-#endif /* USE_SVM_API == 1 */
 
   if(program) {
     clReleaseProgram(program);

@@ -1,4 +1,4 @@
 __kernel
-void parseJson(__global char *restrict jsonstr, __global char *restrict output) {
+void parseJson(__global char *restrict jsonstr, int linesize, __global char *restrict output) {
   
 }
