@@ -30,8 +30,6 @@ scoped_aligned_ptr<char> output_unsafe_row_binary;
 float rand_float();
 bool init_opencl();
 void run();
-void compute_reference();
-void verify();
 void cleanup();
 
 // Entry point.
@@ -130,22 +128,22 @@ bool init_opencl() {
   kernel.reset(num_devices);
 
   // Command queue.
-  queue[i] = clCreateCommandQueue(context, device[i], CL_QUEUE_PROFILING_ENABLE, &status);
+  queue[0] = clCreateCommandQueue(context, device[0], CL_QUEUE_PROFILING_ENABLE, &status);
   checkError(status, "Failed to create command queue");
 
   // Kernel.
   const char *kernel_name = "parseJson";
-  kernel[i] = clCreateKernel(program, kernel_name, &status);
+  kernel[0] = clCreateKernel(program, kernel_name, &status);
   checkError(status, "Failed to create kernel");
 
   // Input buffers.
   //We specifically assign this buffer to the first bank of global memory.
-  input_json_buf = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_CHANNEL_1_INTELFPGA,
+  input_json_buf = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_BANK_1_ALTERA,
       json_file_size * sizeof(char), NULL, &status);
   checkError(status, "Failed to create buffer for json string");
 
   // Output buffer. This is unsaferow buffer, We assign this buffer to the first bank of global memory,
-  output_unsaferow_buf = clCreateBuffer(context, CL_MEM_WRITE_ONLY | CL_CHANNEL_1_INTELFPGA,
+  output_unsaferow_buf = clCreateBuffer(context, CL_MEM_WRITE_ONLY | CL_MEM_BANK_2_ALTERA,
       json_lines_count*unsafe_row_size, NULL, &status);
   checkError(status, "Failed to create buffer for unsaferow output");
 
@@ -198,7 +196,7 @@ void run() {
     const size_t local_work_size[2]  = {unsafe_row_size, 1};
     printf("Launching for device %d (global size: %zd, %zd)\n", i, global_work_size[0], global_work_size[1]);
 
-    status = clEnqueueNDRangeKernel(queue[i], kernel[i], 2, NULL,
+    status = clEnqueueNDRangeKernel(queue[0], kernel[0], 2, NULL,
         global_work_size, local_work_size, 0, NULL, &kernel_event[i]);
     checkError(status, "Failed to launch kernel");
   }
@@ -225,62 +223,11 @@ void run() {
 
   // Read the result.
   for(unsigned i = 0; i < num_devices; ++i) {
-    status = clEnqueueReadBuffer(queue[i], output_unsaferow_buf, CL_TRUE,
+    status = clEnqueueReadBuffer(queue[0], output_unsaferow_buf, CL_TRUE,
         0, json_lines_count * unsafe_row_size, output_unsafe_row_binary, 0, NULL, NULL);
     checkError(status, "Failed to read output matrix");
   }
 
-  // Verify results.
-  //compute_reference();
-  //verify();
-}
-
-void compute_reference() {
-  // Compute the reference output.
-  printf("Computing reference output\n");
-  ref_output.reset(C_height * C_width);
-
-  for(unsigned y = 0, dev_index = 0; y < C_height; ++dev_index) {
-    for(unsigned yy = 0; yy < rows_per_device[dev_index]; ++yy, ++y) {
-      for(unsigned x = 0; x < C_width; ++x) {
-        // Compute result for C(y, x)
-        float sum = 0.0f;
-        for(unsigned k = 0; k < A_width; ++k) {
-          sum += input_a[dev_index][yy * A_width + k] * input_b[k * B_width + x];
-        }
-        ref_output[y * C_width + x] = sum;
-      }
-    }
-  }
-}
-
-void verify() {
-  printf("Verifying\n");
-
-  // Compute the L^2-Norm of the difference between the output and reference
-  // output matrices and compare it against the L^2-Norm of the reference.
-  float diff = 0.0f;
-  float ref = 0.0f;
-  for(unsigned y = 0, dev_index = 0; y < C_height; ++dev_index) {
-    for(unsigned yy = 0; yy < rows_per_device[dev_index]; ++yy, ++y) {
-      for(unsigned x = 0; x < C_width; ++x) {
-        const float o = output[dev_index][yy * C_width + x];
-        const float r = ref_output[y * C_width + x];
-        const float d = o - r;
-        diff += d * d;
-        ref += r * r;
-      }
-    }
-  }
-
-  const float diff_l2norm = sqrtf(diff);
-  const float ref_l2norm = sqrtf(ref);
-  const float error = diff_l2norm / ref_l2norm;
-  const bool pass = error < 1e-6;
-  printf("Verification: %s\n", pass ? "PASS" : "FAIL");
-  if(!pass) {
-    printf("Error (L^2-Norm): %0.3g\n", error);
-  }
 }
 
 // Free the resources allocated during initialization
@@ -289,8 +236,8 @@ void cleanup() {
     if(kernel && kernel[i]) {
       clReleaseKernel(kernel[i]);
     }
-    if(queue && queue[i]) {
-      clReleaseCommandQueue(queue[i]);
+    if(queue && queue[0]) {
+      clReleaseCommandQueue(queue[0]);
     }
     if (input_json_buf) {
       clReleaseMemObject(input_json_buf);

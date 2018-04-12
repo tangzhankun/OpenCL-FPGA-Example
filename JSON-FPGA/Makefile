@@ -1,4 +1,4 @@
-# Copyright (C) 2013-2018 Altera Corporation, San Jose, California, USA. All rights reserved.
+# Copyright (C) 2013-2016 Altera Corporation, San Jose, California, USA. All rights reserved.
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this
 # software and associated documentation files (the "Software"), to deal in the Software
 # without restriction, including without limitation the rights to use, copy, modify, merge,
@@ -20,7 +20,7 @@
 # by the laws of the United States of America.
 # This is a GNU Makefile.
 
-# You must configure INTELFPGAOCLSDKROOT to point the root directory of the Intel(R) FPGA SDK for OpenCL(TM)
+# You must configure ALTERAOCLSDKROOT to point the root directory of the Intel(R) FPGA SDK for OpenCL(TM)
 # software installation.
 # See http://www.altera.com/literature/hb/opencl-sdk/aocl_getting_started.pdf 
 # for more information on installing and configuring the Intel(R) FPGA SDK for OpenCL(TM).
@@ -32,11 +32,11 @@ ECHO := @
 endif
 
 # Where is the Intel(R) FPGA SDK for OpenCL(TM) software?
-ifeq ($(wildcard $(INTELFPGAOCLSDKROOT)),)
-$(error Set INTELFPGAOCLSDKROOT to the root directory of the Intel(R) FPGA SDK for OpenCL(TM) software installation)
+ifeq ($(wildcard $(ALTERAOCLSDKROOT)),)
+$(error Set ALTERAOCLSDKROOT to the root directory of the Intel(R) FPGA SDK for OpenCL(TM) software installation)
 endif
-ifeq ($(wildcard $(INTELFPGAOCLSDKROOT)/host/include/CL/opencl.h),)
-$(error Set INTELFPGAOCLSDKROOT to the root directory of the Intel(R) FPGA SDK for OpenCL(TM) software installation.)
+ifeq ($(wildcard $(ALTERAOCLSDKROOT)/host/include/CL/opencl.h),)
+$(error Set ALTERAOCLSDKROOT to the root directory of the Intel(R) FPGA SDK for OpenCL(TM) software installation.)
 endif
 
 # OpenCL compile and link flags.
@@ -58,12 +58,12 @@ TARGET := host
 TARGET_DIR := bin
 
 # Directories
-INC_DIRS := host/inc ../common/inc
+INC_DIRS := host/inc common/inc
 LIB_DIRS := 
 
 # Files
 INCS := $(wildcard host/inc/*.h)
-SRCS := $(wildcard host/src/*.cpp ../common/src/AOCLUtils/*.cpp)
+SRCS := $(wildcard host/src/*.cpp common/src/AOCLUtils/*.cpp)
 LIBS := rt pthread
 
 # Make it all!
