@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <string>
 #include "CL/opencl.h"
 #include "AOCLUtils/aocl_utils.h"
 
@@ -34,22 +35,25 @@ void cleanup();
 
 // Entry point.
 int main(int argc, char **argv) {
-  char* jsonFilePath = NULL;
+  std::string jsonFilePath;
   Options options(argc, argv);
   if(options.has("jsonline")) {
     json_lines_count = options.get<unsigned>("jsonline");
+    printf("json lines count: %d.\n", json_lines_count);
   }
   if(options.has("jsonfile")) {
-    jsonFilePath = options.get<char*>("jsonfile");
-    FILE *fp = fopen(jsonFilePath, "r");
+    jsonFilePath = options.get<std::string>("jsonfile");
+    printf("json file path: %s. \n", jsonFilePath.c_str());
+    FILE *fp = fopen(jsonFilePath.c_str(), "r");
     if (!fp) {
-      fprintf(stderr, "Cannot open file %s, Exiting...\n", jsonFilePath);
+      fprintf(stderr, "Cannot open file %s, Exiting...\n", jsonFilePath.c_str());
       exit(-1);
     }
     fseek(fp, 0L, SEEK_END);
     json_file_size = ftell(fp);
     rewind(fp);
     input_json_str.reset(json_file_size);
+    printf("json file size: %d. \n", json_file_size);
     unsigned read_size = fread(input_json_str.get(), sizeof(char), json_file_size, fp); 
     input_json_str[read_size] = '\0';
     if (json_file_size != read_size) {
@@ -61,8 +65,6 @@ int main(int argc, char **argv) {
     fclose(fp);
     json_line_size = json_file_size/json_lines_count;
   }
-  printf("Json file path:\n  %s", jsonFilePath);
-
   // Initialize OpenCL.
   if(!init_opencl()) {
     return -1;
@@ -73,7 +75,6 @@ int main(int argc, char **argv) {
 
   // Free the resources allocated
   cleanup();
-
   return 0;
 }
 
