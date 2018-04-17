@@ -124,15 +124,15 @@ bool init_opencl() {
   const unsigned MAX_INFO_SIZE = 0x10000;
   char info_buf[MAX_INFO_SIZE];
   status = clBuildProgram(program, 0, NULL, "", NULL, NULL);
-  if (err != CL_SUCCESS)
+  if (status != CL_SUCCESS)
   {
-    fprintf(stderr, "clBuild failed:%d\n", err);
-    clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
+    fprintf(stderr, "clBuild failed:%d\n", status);
+    clGetProgramBuildInfo(program, device[0], CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
     fprintf(stderr, "\n%s\n", info_buf);
     exit(1);
   }
   else{
-    clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
+    clGetProgramBuildInfo(program, device[0], CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
     printf("Kernel Build Success\n%s\n", info_buf);
   }
   checkError(status, "Failed to build program");

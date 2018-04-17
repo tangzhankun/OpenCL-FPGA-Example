@@ -31,3 +31,6 @@
 *.out
 *.app
 bin
+json_parse
+json_parse.aocx
+json_parse.aoco
