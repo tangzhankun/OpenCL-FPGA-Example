@@ -1,13 +1,10 @@
 __kernel
 void parseJson(__global char *restrict jsonstr, int linesize, __global char *restrict output) {
-  unsigned thread_id = get_global_id(0);
-
-  if(thread_id == 2) {
-    printf("Thread #%u: Hello JSON from Altera's OpenCL Compiler!\n", thread_id);
-  }
+  unsigned thread_id = get_group_id(0);
+  printf("Group #%u: Hello JSON from Altera's OpenCL Compiler!\n", thread_id);
   // each kernel should process one json line
   // {"a":"1","b":"1"}
-  char *cursor = jsonstr;
+  char *cursor = jsonstr + thread_id*linesize;
   //char fieldName1 = 'a';
   //char filedName2 = 'b';
   char *vals = new char[2];
@@ -28,7 +25,7 @@ void parseJson(__global char *restrict jsonstr, int linesize, __global char *res
   }
   char *unsafeRow = new char[40];
   memset(unsafeRow, 0, 40);
-  int currentUnsafeRowPosition = thread_id*40;
+  int currentUnsafeRowPosition = thread_id*linesize;
   int index = 0;
   output[currentUnsafeRowPosition] |= 0;
   *(uint32_t*)( output + currentUnsafeRowPosition + 8 + 8 * index) = 1;//string length

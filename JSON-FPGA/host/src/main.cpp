@@ -121,7 +121,20 @@ bool init_opencl() {
   program = createProgramFromBinary(context, binary_file.c_str(), device, num_devices);
 
   // Build the program that was just created.
+  const unsigned MAX_INFO_SIZE = 0x10000;
+  char info_buf[MAX_INFO_SIZE];
   status = clBuildProgram(program, 0, NULL, "", NULL, NULL);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "clBuild failed:%d\n", err);
+    clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
+    fprintf(stderr, "\n%s\n", info_buf);
+    exit(1);
+  }
+  else{
+    clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
+    printf("Kernel Build Success\n%s\n", info_buf);
+  }
   checkError(status, "Failed to build program");
 
   // Create per-device objects.
@@ -193,11 +206,11 @@ void run() {
     //
     // Events are used to ensure that the kernel is not launched until
     // the writes to the input buffers have completed.
-    const size_t global_work_size[2] = {json_lines_count * unsafe_row_size, 1};
-    const size_t local_work_size[2]  = {unsafe_row_size, 1};
+    const size_t global_work_size[1] = {json_lines_count};
+    const size_t local_work_size[1]  = {1};
     printf("Launching for device %d (global size: %zd, %zd)\n", i, global_work_size[0], global_work_size[1]);
 
-    status = clEnqueueNDRangeKernel(queue[0], kernel[0], 2, NULL,
+    status = clEnqueueNDRangeKernel(queue[0], kernel[0], 1, NULL,
         global_work_size, local_work_size, 0, NULL, &kernel_event[i]);
     checkError(status, "Failed to launch kernel");
   }
