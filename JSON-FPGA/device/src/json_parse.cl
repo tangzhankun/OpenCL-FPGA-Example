@@ -1,7 +1,7 @@
 __kernel
 void parseJson(__global char *restrict jsonstr, int linesize, __global char *restrict output) {
   unsigned thread_id = get_group_id(0);
-  printf("Group #%u: Hello JSON from Altera's OpenCL Compiler!\n", thread_id);
+  printf("Group #%u:", thread_id);
   // each kernel should process one json line
   // {"a":"1","b":"1"}
   int cursor = thread_id*linesize;

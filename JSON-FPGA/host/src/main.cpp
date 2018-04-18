@@ -64,6 +64,7 @@ int main(int argc, char **argv) {
     }
     fclose(fp);
     json_line_size = json_file_size/json_lines_count;
+    output_unsafe_row_binary.reset(json_line_size * 40);
   }
   // Initialize OpenCL.
   if(!init_opencl()) {
@@ -208,7 +209,7 @@ void run() {
     // the writes to the input buffers have completed.
     const size_t global_work_size[1] = {json_lines_count};
     const size_t local_work_size[1]  = {1};
-    printf("Launching for device %d (global size: %zd, %zd)\n", i, global_work_size[0], global_work_size[1]);
+    printf("Launching for device %d (global size: %zd)\n", i, global_work_size[0]);
 
     status = clEnqueueNDRangeKernel(queue[0], kernel[0], 1, NULL,
         global_work_size, local_work_size, 0, NULL, &kernel_event[i]);
@@ -241,7 +242,15 @@ void run() {
         0, json_lines_count * unsafe_row_size, output_unsafe_row_binary, 0, NULL, NULL);
     checkError(status, "Failed to read output matrix");
   }
-
+  for(unsigned i = 0; i < json_lines_count; ++i) {
+    for(unsigned j=0; j < 40; ++j){
+      printf("%*d,",2, output_unsafe_row_binary[i]);
+      if (j!=0 && j%8 == 0) {
+        printf("|");
+      }
+    }
+    printf("\n");
+  }
 }
 
 // Free the resources allocated during initialization

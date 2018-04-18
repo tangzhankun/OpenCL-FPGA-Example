@@ -1,2 +1,3 @@
 #!/bin/bash
-./bin/host -jsonline=2 -jsonfile="./example.json"
+lines=2
+./bin/host -jsonline=$lines -jsonfile="./bin/$lines.json"
