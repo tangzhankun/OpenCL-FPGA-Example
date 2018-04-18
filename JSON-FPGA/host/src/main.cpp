@@ -6,7 +6,8 @@
 #include "AOCLUtils/aocl_utils.h"
 
 using namespace aocl_utils;
-
+// we use {"a":"1","b":"1"} as a sample fix size row
+#define UNSAFEROWSIZE 40
 // OpenCL runtime configuration
 cl_platform_id platform = NULL;
 unsigned num_devices = 0;
@@ -64,7 +65,7 @@ int main(int argc, char **argv) {
     }
     fclose(fp);
     json_line_size = json_file_size/json_lines_count;
-    output_unsafe_row_binary.reset(json_line_size * 40);
+    output_unsafe_row_binary.reset(json_line_size * UNSAFEROWSIZE);
   }
   // Initialize OpenCL.
   if(!init_opencl()) {
@@ -243,7 +244,8 @@ void run() {
     checkError(status, "Failed to read output matrix");
   }
   for(unsigned i = 0; i < json_lines_count; ++i) {
-    for(unsigned j=0; j < 40; ++j){
+    for(unsigned j=0; j < UNSAFEROWSIZE; ++j){
+      //printf("%*hhx,",2, output_unsafe_row_binary[i]);
       printf("%*d,",2, output_unsafe_row_binary[i]);
       if (j!=0 && j%8 == 0) {
         printf("|");

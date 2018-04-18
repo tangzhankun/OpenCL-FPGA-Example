@@ -31,6 +31,7 @@
 *.out
 *.app
 bin
+*.log
 json_parse
 json_parse.aocx
 json_parse.aoco

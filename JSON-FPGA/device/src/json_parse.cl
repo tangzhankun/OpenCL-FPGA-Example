@@ -1,7 +1,8 @@
 __kernel
 void parseJson(__global char *restrict jsonstr, int linesize, __global char *restrict output) {
+  //printf("[kernel]json content:\n%s\n",jsonstr);
+  printf("[kernel]linesize: %d\n",linesize);
   unsigned thread_id = get_group_id(0);
-  printf("Group #%u:", thread_id);
   // each kernel should process one json line
   // {"a":"1","b":"1"}
   int cursor = thread_id*linesize;
@@ -10,8 +11,10 @@ void parseJson(__global char *restrict jsonstr, int linesize, __global char *res
   while(!(jsonstr[cursor] == '}')) {
     switch (jsonstr[cursor]) {
       case ':':
+        ++cursor;//skip the ':'
         ++cursor;//skip the '"'
         vals[fieldIndex] = jsonstr[cursor];
+        printf("[kernel]Group #%u:,got value:%c\n", thread_id, vals[fieldIndex]);
         continue;
       case ',':
         fieldIndex++;
@@ -21,7 +24,6 @@ void parseJson(__global char *restrict jsonstr, int linesize, __global char *res
         ++cursor;
     }
   }
-  __local char unsafeRow[40];
   int currentUnsafeRowPosition = thread_id*linesize;
   int index = 0;
   output[currentUnsafeRowPosition] |= 0;
