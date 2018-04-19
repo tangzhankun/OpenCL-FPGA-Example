@@ -23,7 +23,7 @@ cl_mem output_unsaferow_buf;
 unsigned json_lines_count = 10;
 // {"a":"a","b":"b"}, maximum value size to 8 bytes
 unsigned json_line_column_count = 2;
-unsigned unsafe_row_size = 8 + (8 + 8) * json_line_column_count;
+unsigned unsafe_row_size = UNSAFEROWSIZE;//8 + (8 + 8) * json_line_column_count;
 unsigned json_file_size = 0;
 unsigned json_line_size = 0;
 char* input_json_str;
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     }
     fclose(fp);
     json_line_size = json_file_size/json_lines_count;
-    output_unsafe_row_binary = new char[json_line_size * UNSAFEROWSIZE];
+    output_unsafe_row_binary = new char[json_lines_count * UNSAFEROWSIZE];
   }
   // Initialize OpenCL.
   if(!init_opencl()) {
