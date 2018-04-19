@@ -10,12 +10,12 @@ using namespace aocl_utils;
 #define UNSAFEROWSIZE 40
 // OpenCL runtime configuration
 cl_platform_id platform = NULL;
-unsigned num_devices = 0;
-scoped_array<cl_device_id> device; // num_devices elements
+unsigned num_devices = 1;
+cl_device_id *device; // num_devices elements
 cl_context context = NULL;
-scoped_array<cl_command_queue> queue; // num_devices elements
+cl_command_queue queue; // num_devices elements
 cl_program program = NULL;
-scoped_array<cl_kernel> kernel; // num_devices elements
+cl_kernel kernel; // num_devices elements
 
 cl_mem input_json_buf;
 cl_mem output_unsaferow_buf;
@@ -26,8 +26,8 @@ unsigned json_line_column_count = 2;
 unsigned unsafe_row_size = 8 + (8 + 8) * json_line_column_count;
 unsigned json_file_size = 0;
 unsigned json_line_size = 0;
-scoped_aligned_ptr<char> input_json_str;
-scoped_aligned_ptr<char> output_unsafe_row_binary;
+char* input_json_str;
+char* output_unsafe_row_binary;
 // Function prototypes
 float rand_float();
 bool init_opencl();
@@ -53,10 +53,9 @@ int main(int argc, char **argv) {
     fseek(fp, 0L, SEEK_END);
     json_file_size = ftell(fp);
     rewind(fp);
-    input_json_str.reset(json_file_size);
+    input_json_str = new char[json_file_size];
     printf("json file size: %d. \n", json_file_size);
-    unsigned read_size = fread(input_json_str.get(), sizeof(char), json_file_size, fp); 
-    input_json_str[read_size] = '\0';
+    unsigned read_size = fread(input_json_str, sizeof(char), json_file_size, fp); 
     if (json_file_size != read_size) {
       // Something went wrong, throw away the memory and set
       // the buffer to NULL
@@ -65,7 +64,7 @@ int main(int argc, char **argv) {
     }
     fclose(fp);
     json_line_size = json_file_size/json_lines_count;
-    output_unsafe_row_binary.reset(json_line_size * UNSAFEROWSIZE);
+    output_unsafe_row_binary = new char[json_line_size * UNSAFEROWSIZE];
   }
   // Initialize OpenCL.
   if(!init_opencl()) {
@@ -105,12 +104,12 @@ bool init_opencl() {
   }
 
   // Query the available OpenCL device.
-  device.reset(getDevices(platform, CL_DEVICE_TYPE_ALL, &num_devices));
+  device = getDevices(platform, CL_DEVICE_TYPE_ALL, &num_devices);
   printf("Platform: %s\n", getPlatformName(platform).c_str());
   printf("Using %d device(s)\n", num_devices);
-  for(unsigned i = 0; i < num_devices; ++i) {
-    printf("  %s\n", getDeviceName(device[i]).c_str());
-  }
+  //for(unsigned i = 0; i < num_devices; ++i) {
+  printf("  %s\n", getDeviceName(*device).c_str());
+  //}
 
   // Create the context.
   context = clCreateContext(NULL, num_devices, device, &oclContextCallback, NULL, &status);
@@ -118,7 +117,7 @@ bool init_opencl() {
 
   // Create the program for all device. Use the first device as the
   // representative device (assuming all device are of the same type).
-  std::string binary_file = getBoardBinaryFile("json_parse", device[0]);
+  std::string binary_file = getBoardBinaryFile("json_parse", *device);
   printf("Using AOCX: %s\n", binary_file.c_str());
   program = createProgramFromBinary(context, binary_file.c_str(), device, num_devices);
 
@@ -129,27 +128,23 @@ bool init_opencl() {
   if (status != CL_SUCCESS)
   {
     fprintf(stderr, "clBuild failed:%d\n", status);
-    clGetProgramBuildInfo(program, device[0], CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
+    clGetProgramBuildInfo(program, *device, CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
     fprintf(stderr, "\n%s\n", info_buf);
     exit(1);
   }
   else{
-    clGetProgramBuildInfo(program, device[0], CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
+    clGetProgramBuildInfo(program, *device, CL_PROGRAM_BUILD_LOG, MAX_INFO_SIZE, info_buf, NULL);
     printf("Kernel Build Success\n%s\n", info_buf);
   }
   checkError(status, "Failed to build program");
 
-  // Create per-device objects.
-  queue.reset(num_devices);
-  kernel.reset(num_devices);
-
   // Command queue.
-  queue[0] = clCreateCommandQueue(context, device[0], CL_QUEUE_PROFILING_ENABLE, &status);
+  queue = clCreateCommandQueue(context, *device, CL_QUEUE_PROFILING_ENABLE, &status);
   checkError(status, "Failed to create command queue");
 
   // Kernel.
   const char *kernel_name = "parseJson";
-  kernel[0] = clCreateKernel(program, kernel_name, &status);
+  kernel = clCreateKernel(program, kernel_name, &status);
   checkError(status, "Failed to create kernel");
 
   // Input buffers.
@@ -173,30 +168,30 @@ void run() {
   // Transfer inputs to each device. Each of the host buffers supplied to
   // clEnqueueWriteBuffer here is already aligned to ensure that DMA is used
   // for the host-to-device transfer.
-  status = clEnqueueWriteBuffer(queue[0], input_json_buf, CL_FALSE,
+  status = clEnqueueWriteBuffer(queue, input_json_buf, CL_FALSE,
       0, json_file_size, input_json_str, 0, NULL, NULL);
   checkError(status, "Failed to transfer json_str to FPGA");
 
   // Wait for all queues to finish.
-  clFinish(queue[0]);
+  clFinish(queue);
 
   // Launch kernels.
   // This is the portion of time that we'll be measuring for throughput
   // benchmarking.
-  scoped_array<cl_event> kernel_event(num_devices);
+  cl_event kernel_event;
 
   const double start_time = getCurrentTimestamp();
   for(unsigned i = 0; i < num_devices; ++i) {
     // Set kernel arguments.
     unsigned argi = 0;
 
-    status = clSetKernelArg(kernel[i], argi++, sizeof(cl_mem), &input_json_buf);
+    status = clSetKernelArg(kernel, argi++, sizeof(cl_mem), &input_json_buf);
     checkError(status, "Failed to set argument(input json buffer) %d", argi - 1);
 
-    status = clSetKernelArg(kernel[i], argi++, sizeof(json_line_size), &json_line_size);
+    status = clSetKernelArg(kernel, argi++, sizeof(json_line_size), &json_line_size);
     checkError(status, "Failed to set argument(json line size) %d", argi - 1);
 
-    status = clSetKernelArg(kernel[i], argi++, sizeof(cl_mem), &output_unsaferow_buf);
+    status = clSetKernelArg(kernel, argi++, sizeof(cl_mem), &output_unsaferow_buf);
     checkError(status, "Failed to set argument(output unsafe row buffer) %d", argi - 1);
 
     // Enqueue kernel.
@@ -212,13 +207,13 @@ void run() {
     const size_t local_work_size[1]  = {1};
     printf("Launching for device %d (global size: %zd)\n", i, global_work_size[0]);
 
-    status = clEnqueueNDRangeKernel(queue[0], kernel[0], 1, NULL,
-        global_work_size, local_work_size, 0, NULL, &kernel_event[i]);
+    status = clEnqueueNDRangeKernel(queue, kernel, 1, NULL,
+        global_work_size, local_work_size, 0, NULL, &kernel_event);
     checkError(status, "Failed to launch kernel");
   }
 
   // Wait for all kernels to finish.
-  clWaitForEvents(num_devices, kernel_event);
+  clWaitForEvents(num_devices, &kernel_event);
 
   const double end_time = getCurrentTimestamp();
   const double total_time = end_time - start_time;
@@ -228,25 +223,25 @@ void run() {
 
   // Get kernel times using the OpenCL event profiling API.
   for(unsigned i = 0; i < num_devices; ++i) {
-    cl_ulong time_ns = getStartEndTime(kernel_event[i]);
+    cl_ulong time_ns = getStartEndTime(kernel_event);
     printf("Kernel time (device %d): %0.3f ms\n", i, double(time_ns) * 1e-6);
   }
 
   // Release kernel events.
   for(unsigned i = 0; i < num_devices; ++i) {
-    clReleaseEvent(kernel_event[i]);
+    clReleaseEvent(kernel_event);
   }
 
   // Read the result.
   for(unsigned i = 0; i < num_devices; ++i) {
-    status = clEnqueueReadBuffer(queue[0], output_unsaferow_buf, CL_TRUE,
+    status = clEnqueueReadBuffer(queue, output_unsaferow_buf, CL_TRUE,
         0, json_lines_count * unsafe_row_size, output_unsafe_row_binary, 0, NULL, NULL);
     checkError(status, "Failed to read output matrix");
   }
   for(unsigned i = 0; i < json_lines_count; ++i) {
     for(unsigned j=0; j < UNSAFEROWSIZE; ++j){
       //printf("%*hhx,",2, output_unsafe_row_binary[i]);
-      printf("%*d,",2, output_unsafe_row_binary[i]);
+      printf("%*d,",2, output_unsafe_row_binary[i*j]);
       if (j!=0 && j%8 == 0) {
         printf("|");
       }
@@ -258,11 +253,11 @@ void run() {
 // Free the resources allocated during initialization
 void cleanup() {
   for(unsigned i = 0; i < num_devices; ++i) {
-    if(kernel && kernel[i]) {
-      clReleaseKernel(kernel[i]);
+    if(kernel) {
+      clReleaseKernel(kernel);
     }
-    if(queue && queue[0]) {
-      clReleaseCommandQueue(queue[0]);
+    if(queue) {
+      clReleaseCommandQueue(queue);
     }
     if (input_json_buf) {
       clReleaseMemObject(input_json_buf);
