@@ -26,8 +26,8 @@ unsigned json_line_column_count = 2;
 unsigned unsafe_row_size = UNSAFEROWSIZE;//8 + (8 + 8) * json_line_column_count;
 unsigned json_file_size = 0;
 unsigned json_line_size = 0;
-char* input_json_str;
-char* output_unsafe_row_binary;
+scoped_aligned_ptr<char> input_json_str;
+scoped_aligned_ptr<char> output_unsafe_row_binary;
 // Function prototypes
 float rand_float();
 bool init_opencl();
@@ -53,9 +53,9 @@ int main(int argc, char **argv) {
     fseek(fp, 0L, SEEK_END);
     json_file_size = ftell(fp);
     rewind(fp);
-    input_json_str = new char[json_file_size];
+    input_json_str.reset(json_file_size);
     printf("json file size: %d. \n", json_file_size);
-    unsigned read_size = fread(input_json_str, sizeof(char), json_file_size, fp); 
+    unsigned read_size = fread(input_json_str.get(), sizeof(char), json_file_size, fp); 
     if (json_file_size != read_size) {
       // Something went wrong, throw away the memory and set
       // the buffer to NULL
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     }
     fclose(fp);
     json_line_size = json_file_size/json_lines_count;
-    output_unsafe_row_binary = new char[json_lines_count * UNSAFEROWSIZE];
+    output_unsafe_row_binary.reset(json_lines_count * UNSAFEROWSIZE);
   }
   // Initialize OpenCL.
   if(!init_opencl()) {
@@ -169,7 +169,7 @@ void run() {
   // clEnqueueWriteBuffer here is already aligned to ensure that DMA is used
   // for the host-to-device transfer.
   status = clEnqueueWriteBuffer(queue, input_json_buf, CL_FALSE,
-      0, json_file_size, input_json_str, 0, NULL, NULL);
+      0, json_file_size, input_json_str.get(), 0, NULL, NULL);
   checkError(status, "Failed to transfer json_str to FPGA");
 
   // Wait for all queues to finish.
@@ -235,9 +235,10 @@ void run() {
   // Read the result.
   for(unsigned i = 0; i < num_devices; ++i) {
     status = clEnqueueReadBuffer(queue, output_unsaferow_buf, CL_TRUE,
-        0, json_lines_count * unsafe_row_size, output_unsafe_row_binary, 0, NULL, NULL);
+        0, json_lines_count * unsafe_row_size, output_unsafe_row_binary.get(), 0, NULL, NULL);
     checkError(status, "Failed to read output matrix");
   }
+/*
   for(unsigned i = 0; i < json_lines_count; ++i) {
     for(unsigned j=0; j < UNSAFEROWSIZE; ++j){
       //printf("%*hhx,",2, output_unsafe_row_binary[i]);
@@ -248,6 +249,7 @@ void run() {
     }
     printf("\n");
   }
+*/
 }
 
 // Free the resources allocated during initialization
