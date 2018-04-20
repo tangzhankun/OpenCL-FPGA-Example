@@ -2,7 +2,9 @@ __kernel
 void parseJson(__global char *restrict jsonstr, int linesize, __global char *restrict output) {
   //printf("[kernel]json content:\n%s\n",jsonstr);
   //printf("[kernel]linesize: %d\n",linesize);
-  unsigned thread_id = get_group_id(0);
+  //printf("[kernel]group id: %ld\n",get_group_id(0));
+  //printf("[kernel]local size: %ld\n",get_local_size(0));
+  unsigned thread_id = get_local_id(0);
   // each kernel should process one json line
   // {"a":"1","b":"1"}
   int cursor = thread_id*linesize;
