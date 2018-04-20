@@ -1,3 +1,4 @@
 #!/bin/bash
-lines=2
-./bin/host -jsonline=$lines -jsonfile="./jsonfiles/$lines.json"
+export CL_CONTEXT_COMPILER_MODE_ALTERA=3
+lines=${1:-10}
+./bin/host -jsonline=$lines -jsonfile="./jsonfiles/${lines}_gen.json"
