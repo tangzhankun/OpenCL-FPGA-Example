@@ -204,7 +204,7 @@ void run() {
     // Events are used to ensure that the kernel is not launched until
     // the writes to the input buffers have completed.
     const size_t global_work_size[1] = {json_lines_count};
-    const size_t local_work_size[1]  = {1};
+    const size_t local_work_size[1]  = {json_lines_count};
     printf("Launching for device %d (global size: %zd)\n", i, global_work_size[0]);
 
     status = clEnqueueNDRangeKernel(queue, kernel, 1, NULL,

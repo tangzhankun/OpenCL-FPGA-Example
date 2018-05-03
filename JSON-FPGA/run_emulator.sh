@@ -3,11 +3,11 @@ recompile=${1:-true}
 if [ $recompile = true ]
 then
   cd device/src
-  aoc -v -march=emulator ./json_parse.cl && cp -f ./json_parse.aocx ../../bin/
+  aoc -v -march=emulator ./json_parse.cl && cp -rf ./json_parse.aocx ../../bin/
   cd -
 fi
 lines=${2:-2}
-env CL_CONTEXT_EMULATOR_DEVICE_ALTERA=1 ./bin/host -jsonline=$lines -jsonfile="./jsonfiles/$lines.json"
+env CL_CONTEXT_EMULATOR_DEVICE_ALTERA=1 ./bin/host -jsonline=$lines -jsonfile="./jsonfiles/${lines}_gen.json"
 #for gdb debug do the following
 #1. env CL_CONTEXT_EMULATOR_DEVICE_ALTERA=1 gdb ./bin/host 
 #2. when get into gdb run below to set args
