@@ -7,7 +7,7 @@
 
 using namespace aocl_utils;
 // we use {"a":"1","b":"1"} as a sample fix size row
-#define UNSAFEROWSIZE 40
+#define UNSAFEROWSIZE 1024
 // OpenCL runtime configuration
 cl_platform_id platform = NULL;
 unsigned num_devices = 1;
